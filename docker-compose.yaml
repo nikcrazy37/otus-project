@@ -2,21 +2,6 @@ version: '3.9'
 
 services:
 
-  nginx:
-    build:
-      context: docker/nginx
-      dockerfile: Dockerfile
-    image: nginx
-    container_name: nginx
-    ports:
-      - "80:80"
-    volumes:
-      - ./code:/data/mysite.local/
-    depends_on:
-      - php
-    networks:
-      - app-network
-
   php:
     build:
       context: docker/php
@@ -24,7 +9,7 @@ services:
     image: php-fpm
     container_name: php
 #    ports:
-#      - "9000:9090"
+#      - "9090:9000"
     volumes:
       - ./code:/data/mysite.local/
     depends_on:
@@ -32,19 +17,8 @@ services:
     networks:
       - app-network
 
-  # Fluentd log collector
-#  fluentd:
-#    image: fluent/fluentd
-#    volumes:
-#      - ./docker/fluentd/fluentd.conf:/fluentd/etc/fluentd.conf
-#    depends_on:
-#      - clickhouse
-#    networks:
-#      - app-network
-
-  # ClickHouse database
   clickhouse:
-    image: yandex/clickhouse-server-no-simd
+    image: yandex/clickhouse-server
     container_name: clickhouse
     volumes:
       - ./data/clickhouse:/var/lib/clickhouse
@@ -54,20 +28,20 @@ services:
     networks:
       - app-network
 
-  # Redash visualization tool
-#  redash:
-#    image: redash/redash
-#    depends_on:
-#      - clickhouse
-#    ports:
-#      - "5000:5000"
+  redash:
+    image: redash/redash
+    container_name: redash
+    ports:
+      - "5000:5000"
 #    environment:
 #      REDASH_DATABASE_URL: "clickhouse://clickhouse:8123"
 #      REDASH_SECRET_KEY: "mysecretkey"
 #      REDASH_COOKIE_SECRET: "mycookiesecret"
 #      REDASH_WEB_WORKERS: "4"
-#    networks:
-#      - app-network
+    depends_on:
+      - clickhouse
+    networks:
+      - app-network
 
 networks:
   app-network:
