@@ -3,16 +3,15 @@ version: '3.9'
 services:
 
   nginx:
-    build:
-      context: docker/nginx
-      dockerfile: Dockerfile
-    image: nginx
+    restart: on-failure
+    image: nginx:latest
     container_name: nginx
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
-      - ./code:/data/mysite.local/
-    depends_on:
+      - ./docker/nginx/hosts/:/etc/nginx/conf.d/
+      - ./code/:/data/mysite.local/
+    links:
       - php
     networks:
       - app-network
@@ -23,51 +22,172 @@ services:
       dockerfile: Dockerfile
     image: php-fpm
     container_name: php
-#    ports:
-#      - "9000:9090"
+    ports:
+      - "9090:9000"
     volumes:
       - ./code:/data/mysite.local/
     depends_on:
+      - redis
       - clickhouse
     networks:
       - app-network
 
-  # Fluentd log collector
-#  fluentd:
-#    image: fluent/fluentd
-#    volumes:
-#      - ./docker/fluentd/fluentd.conf:/fluentd/etc/fluentd.conf
-#    depends_on:
-#      - clickhouse
-#    networks:
-#      - app-network
-
-  # ClickHouse database
-  clickhouse:
-    image: yandex/clickhouse-server-no-simd
-    container_name: clickhouse
+  fluentd:
+    build: ./docker/fluentd
+    container_name: fluentd
     volumes:
-      - ./data/clickhouse:/var/lib/clickhouse
+      - ./docker/fluentd/config:/fluentd/etc
+      - ./data/fluentd:/var/log/fluent
+#      - ./activerecord-import:/activerecord-import
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "24224:24224"
+      - "24224:24224/udp"
     networks:
       - app-network
 
-  # Redash visualization tool
-#  redash:
-#    image: redash/redash
-#    depends_on:
-#      - clickhouse
-#    ports:
-#      - "5000:5000"
-#    environment:
-#      REDASH_DATABASE_URL: "clickhouse://clickhouse:8123"
-#      REDASH_SECRET_KEY: "mysecretkey"
-#      REDASH_COOKIE_SECRET: "mycookiesecret"
-#      REDASH_WEB_WORKERS: "4"
-#    networks:
-#      - app-network
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    container_name: clickhouse
+    hostname: clickhouse
+    ports:
+      - '8123:8123'
+      - '9000:9000'
+      - '9009:9009'
+    volumes:
+      - ./docker/clickhouse/config.xml:/etc/clickhouse-server/config.xml
+      - ./docker/clickhouse/users.xml:/etc/clickhouse-server/users.xml
+      - ./docker/clickhouse/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    environment:
+      - CLICKHOUSE_DB=default
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=default
+    networks:
+      - app-network
+
+  redis:
+    image: redis:latest
+    container_name: redis
+    volumes:
+      - ./data/redis:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:13-alpine3.15
+    container_name: postgres
+    hostname: postgres
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    networks:
+      - app-network
+
+  pgadmin4:
+    image: dpage/pgadmin4:6.5
+    container_name: pgadmin
+    restart: unless-stopped
+    ports:
+      - '8010:80'
+    depends_on:
+      - postgres
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ma@il.com
+      PGADMIN_DEFAULT_PASSWORD: postgres
+    networks:
+      - app-network
+
+  redash-createdb:
+    image: redash/redash
+    container_name: r-createdb
+    depends_on:
+      - redis
+      - postgres
+    command: create_db
+    environment:
+      PYTHONUNBUFFERED: 0
+      REDASH_RATELIMIT_ENABLED: 'false'
+      REDASH_LOG_LEVEL: INFO
+      REDASH_COOKIE_SECRET: secret
+      REDASH_SECRET_KEY: secret
+      REDASH_REDIS_URL: redis://redis:6379/0
+      REDASH_DATABASE_URL: postgresql://postgres:postgres@postgres/postgres
+      REDASH_CLICKHOUSE_URL: clickhouse://default:default@clickhouse:8123/fluentd
+    networks:
+      - app-network
+
+  redash-server:
+    image: redash/redash
+    container_name: r-server
+    restart: unless-stopped
+    ports:
+      - '5000:5000'
+      - '5678:5678'
+    depends_on:
+      - redis
+      - postgres
+      - redash-createdb
+    command: server
+    environment:
+      PYTHONUNBUFFERED: 0
+      REDASH_RATELIMIT_ENABLED: 'false'
+      REDASH_LOG_LEVEL: INFO
+      REDASH_COOKIE_SECRET: secret
+      REDASH_SECRET_KEY: secret
+      REDASH_REDIS_URL: redis://redis:6379/0
+      REDASH_DATABASE_URL: postgresql://postgres:postgres@postgres/postgres
+      REDASH_CLICKHOUSE_URL: clickhouse://default:default@clickhouse:8123/fluentd
+    networks:
+      - app-network
+
+
+  redash-scheduler:
+    image: redash/redash
+    container_name: r-scheduler
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
+      - redash-createdb
+    command: scheduler
+    environment:
+      PYTHONUNBUFFERED: 0
+      REDASH_RATELIMIT_ENABLED: 'false'
+      REDASH_LOG_LEVEL: INFO
+      REDASH_COOKIE_SECRET: secret
+      REDASH_SECRET_KEY: secret
+      REDASH_REDIS_URL: redis://redis:6379/0
+      REDASH_DATABASE_URL: postgresql://postgres:postgres@postgres/postgres
+      REDASH_CLICKHOUSE_URL: clickhouse://default:default@clickhouse:8123/fluentd
+    networks:
+      - app-network
+
+
+  redash-worker:
+    image: redash/redash
+    container_name: r-worker
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - postgres
+      - redash-createdb
+    command: worker
+    environment:
+      PYTHONUNBUFFERED: 0
+      REDASH_RATELIMIT_ENABLED: 'false'
+      REDASH_LOG_LEVEL: INFO
+      REDASH_COOKIE_SECRET: secret
+      REDASH_SECRET_KEY: secret
+      REDASH_REDIS_URL: redis://redis:6379/0
+      REDASH_DATABASE_URL: postgresql://postgres:postgres@postgres/postgres
+      REDASH_CLICKHOUSE_URL: clickhouse://default:default@clickhouse:8123/fluentd
+    networks:
+      - app-network
 
 networks:
   app-network:
