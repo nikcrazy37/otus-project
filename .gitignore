@@ -1,3 +1,4 @@
 .env
 code/vendor
 data
+.idea

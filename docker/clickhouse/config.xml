@@ -32,7 +32,7 @@
     <keep_alive_timeout>3</keep_alive_timeout>
 
     <!-- Maximum number of concurrent queries. -->
-    <max_concurrent_queries>100</max_concurrent_queries>
+    <max_concurrent_queries>2000</max_concurrent_queries>
 
     <!-- Size of cache of uncompressed blocks of data, used in tables of MergeTree family.
          In bytes. Cache is single for server. Memory is allocated only on demand.
